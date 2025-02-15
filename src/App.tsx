@@ -3,7 +3,7 @@ import { Card } from './components/Card';
 import { PlayerList } from './components/PlayerList';
 import { GamePhase } from './components/GamePhase';
 import type { GameState, Player, CardType } from './types';
-import { Users } from 'lucide-react';
+import { Users, StopCircle } from 'lucide-react';
 import { supabase } from './lib/supabase';
 
 const DISCUSSION_TIME = 300; // 5 minutes in seconds
@@ -28,6 +28,7 @@ function App() {
     lobbyCode: '',
     adminId: null,
     minPlayers: 3,
+    jokerCount: 1,
   });
   const [currentPlayer, setCurrentPlayer] = useState<Player | null>(null);
   const [isCreatingLobby, setIsCreatingLobby] = useState(false);
@@ -80,6 +81,12 @@ function App() {
                 },
               };
             } else {
+              // Check win condition when guessing phase ends
+              const jokers = prev.players.filter(p => p.isJoker);
+              const jokersGuessedWrong = jokers.some(joker => 
+                joker.guess !== 'joker'
+              );
+              
               return {
                 ...prev,
                 status: 'results',
@@ -87,6 +94,7 @@ function App() {
                   timeRemaining: 0,
                   startTime: null,
                 },
+                winner: jokersGuessedWrong ? 'players' : 'jokers',
               };
             }
           }
@@ -110,17 +118,36 @@ function App() {
   }, [gameState.status]);
 
   const assignCards = (players: Player[]) => {
-    const cards: CardType[] = Array(players.length - 1).fill('').map(() => 
-      ['hearts', 'diamonds', 'rectangle'][Math.floor(Math.random() * 3)]
-    );
-    const jokerIndex = Math.floor(Math.random() * players.length);
+    const regularCards: CardType[] = ['hearts', 'diamonds', 'rectangle'];
+    const jokerCount = gameState.jokerCount;
+    const playerCount = players.length;
+    
+    // Create array of regular cards needed (excluding jokers)
+    const cardsNeeded = playerCount - jokerCount;
+    let cards: CardType[] = [];
+    
+    // Fill with regular cards
+    while (cards.length < cardsNeeded) {
+      cards = [...cards, ...regularCards];
+    }
+    cards = cards.slice(0, cardsNeeded);
+    
+    // Shuffle regular cards
+    cards = cards.sort(() => Math.random() - 0.5);
+    
+    // Select joker positions
+    const jokerPositions = new Set<number>();
+    while (jokerPositions.size < jokerCount) {
+      jokerPositions.add(Math.floor(Math.random() * playerCount));
+    }
     
     return players.map((player, index) => {
-      if (index === jokerIndex) {
+      if (jokerPositions.has(index)) {
+        // This player is a joker
         return {
           ...player,
           trueCard: 'joker',
-          disguisedCard: cards[Math.floor(Math.random() * cards.length)],
+          disguisedCard: regularCards[Math.floor(Math.random() * regularCards.length)],
           isJoker: true,
         };
       }
@@ -266,6 +293,28 @@ function App() {
     }
   };
 
+  const handleStopGame = async () => {
+    const newState = {
+      ...gameState,
+      status: 'waiting',
+      players: gameState.players.map(player => ({
+        ...player,
+        trueCard: null,
+        disguisedCard: null,
+        isJoker: false,
+        guess: null,
+      })),
+      phase: {
+        timeRemaining: DISCUSSION_TIME,
+        startTime: null,
+      },
+      round: 1,
+      winner: null,
+    };
+    setGameState(newState);
+    await broadcastGameState(newState);
+  };
+
   const handleSkipPhase = async () => {
     const newState = gameState.status === 'discussion'
       ? {
@@ -300,6 +349,7 @@ function App() {
         startTime: Date.now(),
       },
       round: gameState.round + 1,
+      winner: null,
     };
     setGameState(newState);
     await broadcastGameState(newState);
@@ -316,19 +366,35 @@ function App() {
 
     const allPlayersGuessed = updatedPlayers.every(player => player.guess);
     
-    const newState = allPlayersGuessed
-      ? {
-          ...gameState,
-          status: 'results',
-          players: updatedPlayers,
-        }
-      : {
-          ...gameState,
-          players: updatedPlayers,
-        };
+    if (allPlayersGuessed) {
+      const jokers = updatedPlayers.filter(p => p.isJoker);
+      const jokersGuessedWrong = jokers.some(joker => 
+        joker.guess !== 'joker'
+      );
 
-    setGameState(newState);
-    await broadcastGameState(newState);
+      const newState = {
+        ...gameState,
+        status: 'results',
+        players: updatedPlayers,
+        winner: jokersGuessedWrong ? 'players' : 'jokers',
+      };
+      setGameState(newState);
+      await broadcastGameState(newState);
+    } else {
+      const newState = {
+        ...gameState,
+        players: updatedPlayers,
+      };
+      setGameState(newState);
+      await broadcastGameState(newState);
+    }
+  };
+
+  const handleJokerCountChange = (count: number) => {
+    setGameState(prev => ({
+      ...prev,
+      jokerCount: count,
+    }));
   };
 
   const isAdmin = currentPlayer?.id === gameState.adminId;
@@ -411,13 +477,41 @@ function App() {
                     Players: {gameState.players.length}
                   </p>
                 </div>
-                {isAdmin && gameState.players.length >= gameState.minPlayers && (
-                  <button
-                    onClick={handleStartGame}
-                    className="w-full bg-green-500 text-white py-2 rounded-lg hover:bg-green-600 transition-colors"
-                  >
-                    Start Game
-                  </button>
+                {isAdmin && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-lg">
+                      <label className="text-gray-700 font-medium">Number of Jokers:</label>
+                      <div className="flex gap-2">
+                        {[1, 2, 3].map((count) => (
+                          <button
+                            key={count}
+                            onClick={() => handleJokerCountChange(count)}
+                            className={`px-4 py-2 rounded-lg ${
+                              gameState.jokerCount === count
+                                ? 'bg-blue-500 text-white'
+                                : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
+                            }`}
+                          >
+                            {count}
+                          </button>
+                        ))}
+                        <button
+                          onClick={() => handleJokerCountChange(Math.floor(Math.random() * 3) + 1)}
+                          className="px-4 py-2 rounded-lg bg-purple-500 text-white hover:bg-purple-600"
+                        >
+                          Random
+                        </button>
+                      </div>
+                    </div>
+                    {gameState.players.length >= gameState.minPlayers && (
+                      <button
+                        onClick={handleStartGame}
+                        className="w-full bg-green-500 text-white py-2 rounded-lg hover:bg-green-600 transition-colors"
+                      >
+                        Start Game
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -430,12 +524,21 @@ function App() {
                   round={gameState.round}
                 />
                 {isAdmin && (
-                  <button
-                    onClick={handleSkipPhase}
-                    className="w-full mt-4 bg-yellow-500 text-white py-2 rounded-lg hover:bg-yellow-600 transition-colors"
-                  >
-                    Skip Phase
-                  </button>
+                  <div className="space-y-4">
+                    <button
+                      onClick={handleSkipPhase}
+                      className="w-full mt-4 bg-yellow-500 text-white py-2 rounded-lg hover:bg-yellow-600 transition-colors"
+                    >
+                      Skip Phase
+                    </button>
+                    <button
+                      onClick={handleStopGame}
+                      className="w-full flex items-center justify-center gap-2 bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition-colors"
+                    >
+                      <StopCircle className="w-5 h-5" />
+                      Stop Game
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -449,21 +552,19 @@ function App() {
               />
             </div>
             
-            {gameState.status === 'results' && isAdmin && (
-              <button
-                onClick={handleNextRound}
-                className="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors"
-              >
-                Next Round
-              </button>
-            )}
-
-            {currentPlayer.isJoker && (
-              <div className="text-center mt-8">
-                <h3 className="text-xl font-semibold mb-4">Your True Card</h3>
-                <div className="flex justify-center">
-                  <Card value="joker" isRevealed={true} />
-                </div>
+            {gameState.status === 'results' && (
+              <div className="text-center mt-8 p-6 bg-white rounded-lg shadow-lg">
+                <h2 className="text-2xl font-bold mb-4">
+                  {gameState.winner === 'players' ? 'Players Win!' : 'Jokers Win!'}
+                </h2>
+                {isAdmin && (
+                  <button
+                    onClick={handleNextRound}
+                    className="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors"
+                  >
+                    Next Round
+                  </button>
+                )}
               </div>
             )}
           </div>

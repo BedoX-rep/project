@@ -12,6 +12,7 @@ interface PlayerListProps {
 export function PlayerList({ players, currentPlayerId, onMakeGuess, gameStatus }: PlayerListProps) {
   const currentPlayer = players.find(p => p.id === currentPlayerId);
   const isGuessingPhase = gameStatus === 'guessing';
+  const gameStarted = gameStatus !== 'waiting';
 
   return (
     <div className="space-y-8">
@@ -26,11 +27,17 @@ export function PlayerList({ players, currentPlayerId, onMakeGuess, gameStatus }
             }`}
           >
             <p className="font-semibold text-center mb-2">{player.name}</p>
-            {player.id !== currentPlayerId && (
+            {gameStarted && player.id !== currentPlayerId && (
               <Card 
                 value={player.disguisedCard || 'hearts'} 
                 isRevealed={true}
               />
+            )}
+            {gameStarted && player.id === currentPlayerId && player.isJoker && (
+              <div>
+                <p className="text-sm text-purple-600 font-medium mb-2">You are the Joker!</p>
+                <Card value="joker" isRevealed={true} />
+              </div>
             )}
             <p className="text-sm text-gray-600 text-center mt-2">
               {player.isReady ? '✅ Ready' : '⏳ Waiting...'}
@@ -52,14 +59,12 @@ export function PlayerList({ players, currentPlayerId, onMakeGuess, gameStatus }
                 {cardType.charAt(0).toUpperCase() + cardType.slice(1)}
               </button>
             ))}
-            {currentPlayer.isJoker && (
-              <button
-                onClick={() => onMakeGuess('joker')}
-                className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
-              >
-                Joker
-              </button>
-            )}
+            <button
+              onClick={() => onMakeGuess('joker')}
+              className="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors"
+            >
+              Joker
+            </button>
           </div>
         </div>
       )}

@@ -23,6 +23,7 @@ export interface GameState {
   lobbyCode: string;
   adminId: string | null;
   minPlayers: number;
+  jokerCount: number;
 }
 
 export interface CardVisibility {
